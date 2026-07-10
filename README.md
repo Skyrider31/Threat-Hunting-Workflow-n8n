@@ -10,7 +10,6 @@ The pipeline runs periodically on n8n to automate threat hunting scans and alert
 
 ![diagramme](Diagramme.png)
 
----
 
 ## 📋 Prerequisites & Access Rights
 
@@ -46,15 +45,52 @@ The pipeline needs to read active KQL files and open Issues.
 
 ---
 
-### 3. Microsoft Teams (Webhook via Power Automate)
-The pipeline sends interactive alerts.
+### 3. Microsoft Teams (Channel & Power Automate Workflow Setup)
+The pipeline sends interactive alerts directly to a Teams channel. Since Microsoft is deprecating classic Office 365 connectors and webhooks, you must use Power Automate workflows to receive these notifications.
 
-1. In Microsoft Teams, create or choose a channel dedicated to security alerts.
-2. Configure a **Power Automate** workflow (recommended since Microsoft is deprecating classic webhooks):
-   * **Trigger**: "When an HTTP request is received".
-   * **JSON Schema**: Leave blank or let it generate automatically.
-   * **Action**: "Post an Adaptive Card in a chat or channel".
-3. Retrieve the generated **HTTP POST URL**.
+#### Step A: Create or Prepare the Teams Channel
+1. Open **Microsoft Teams**.
+2. Navigate to the Team where you want the alerts to be posted (e.g., `SOC Team` or `IT Security`).
+3. Click the three dots (`...`) next to the Team name and select **Add channel**.
+4. Configure the channel:
+   * **Channel name**: `SecOps - Hunt Alerts`
+   * **Description**: Channel for automated threat hunting alerts from Microsoft Defender XDR.
+   * **Privacy**: Set to **Standard** (accessible to everyone in the team) or **Shared** depending on your policies.
+5. Click **Add** to create the channel.
+
+#### Step B: Set Up the Webhook Workflow (Two Options)
+
+##### Option 1: Using the Teams Workflows App (Easiest & Quickest)
+1. In Microsoft Teams, click **Apps** in the bottom-left sidebar.
+2. Search for and open **Workflows**.
+3. Go to the **Templates** tab and search for: `Post to a channel when a webhook request is received` or `Post an Adaptive Card to a channel when a webhook request is received`.
+4. Click on the template. You will be prompted to authenticate your Microsoft account.
+5. Configure the workflow settings:
+   * **Team**: Select your Team (e.g., `SOC Team`).
+   * **Channel**: Select your new channel (e.g., `SecOps - Hunt Alerts`).
+6. Click **Next** / **Add workflow**.
+7. Once created, Power Automate will display a **Webhook URL** (an HTTP POST URL).
+8. Copy this URL. This is what you will paste into the `Teams Notification` node in n8n.
+
+##### Option 2: Using the Power Automate Portal (More Customizable)
+If you want complete control over the workflow logic or want to pass the Adaptive Card body directly:
+1. Log in to [make.powerautomate.com](https://make.powerautomate.com).
+2. Click **Create** > **Instant cloud flow**.
+3. Name your flow (e.g., `n8n Threat Hunting Alerts Webhook`).
+4. Select the trigger **When an HTTP request is received** and click **Create**.
+5. Inside the trigger settings:
+   * Leave the *Request Body JSON Schema* empty (or click *Use sample payload to generate schema* and paste a sample Adaptive Card structure).
+   * Ensure **Method** is set to `POST`.
+6. Click **+ New step** and search for the **Microsoft Teams** connector.
+7. Select the action **Post adaptive card in a chat or channel**.
+8. Configure the action parameters:
+   * **Post as**: `Flow bot`
+   * **Post in**: `Channel`
+   * **Team**: Select your Team.
+   * **Channel**: Select your channel.
+   * **Adaptive Card**: In this text area, select the dynamic content **Body** (or type `@triggerBody()`). This tells Power Automate to render the exact Adaptive Card payload constructed and sent by the n8n node.
+9. Save the flow. Power Automate will now generate an **HTTP POST URL** in the trigger step.
+10. Copy this URL to use in the n8n `Teams Notification` node.
 
 ---
 
