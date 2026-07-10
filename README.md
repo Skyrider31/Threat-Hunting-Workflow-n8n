@@ -8,25 +8,7 @@ This guide details the steps required to configure and deploy the **Automated Th
 
 The pipeline runs periodically on n8n to automate threat hunting scans and alert dispatching:
 
-```mermaid
-graph TD
-    subgraph Git_Storage [GitLab Repository]
-        A[active-hunts/*.yaml]
-    end
-
-    subgraph Orchestrator [n8n Workflow]
-        Trigger[Schedule Trigger] --> Config[Git Config]
-        Config --> Fetch[Fetch YAML from GitLab]
-        Fetch --> Parse[Parse & Filter by Schedule]
-        Parse --> Query[Query Defender XDR API]
-    end
-
-    subgraph Targets [Destinations]
-        Query -->|Matches Found?| GitLabSearch[Search existing GitLab Issue]
-        GitLabSearch -->|No duplicate| GitLabCreate[Create GitLab Issue]
-        GitLabCreate --> TeamsCard[Format & Send Teams Adaptive Card]
-    end
-```
+![diagramme](Diagramme.png)
 
 ---
 
