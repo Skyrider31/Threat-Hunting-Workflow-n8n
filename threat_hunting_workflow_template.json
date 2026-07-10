@@ -1,0 +1,508 @@
+{
+  "name": "Simplified Threat Hunting Pipeline (Template)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "8e632486-df06-466a-abda-b28e4aeb3366",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        2320,
+        1504
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "gitProjId",
+              "name": "gitLabProjectId",
+              "value": "YOUR_URL_ENCODED_GITLAB_PROJECT_ID",
+              "type": "string"
+            },
+            {
+              "id": "gitBranch",
+              "name": "branch",
+              "value": "main",
+              "type": "string"
+            },
+            {
+              "id": "gitFolder",
+              "name": "folderPath",
+              "value": "active-hunts",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "8896afdd-d60d-43df-a9ee-ab8da018bd8c",
+      "name": "Git Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2576,
+        1504
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://gitlab.example.com/api/v4/projects/{{ $json.gitLabProjectId }}/repository/tree?path={{ encodeURIComponent($json.folderPath) }}&ref={{ $json.branch }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "PRIVATE-TOKEN",
+              "value": "YOUR_GITLAB_PRIVATE_TOKEN"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3e6142f4-80c6-4c54-b7c4-c77bf86e6ae8",
+      "name": "List Git Files",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        2752,
+        1504
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ ($json.name.endsWith(\".yaml\") || $json.name.endsWith(\".yml\")) && $json.type === \"blob\" }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          }
+        },
+        "options": {}
+      },
+      "id": "659ed18b-b614-4321-9062-ee6d13a6d270",
+      "name": "IF YAML File",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2928,
+        1504
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://gitlab.example.com/api/v4/projects/{{ $items(\"Git Config\")[0].json.gitLabProjectId }}/repository/files/{{ encodeURIComponent($json.path) }}/raw?ref={{ $items(\"Git Config\")[0].json.branch }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "PRIVATE-TOKEN",
+              "value": "YOUR_GITLAB_PRIVATE_TOKEN"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "073ea88a-6cb6-4636-93ad-59b641b05f73",
+      "name": "Get File Content",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        3360,
+        1488
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst parsedItems = [];\n\nlet currentHour, currentDay;\ntry {\n  const now = DateTime.now().setZone('Europe/Zurich');\n  currentHour = now.hour;\n  currentDay = now.weekday;\n} catch (e) {\n  const d = new Date();\n  currentHour = d.getHours();\n  const day = d.getDay();\n  currentDay = day === 0 ? 7 : day;\n}\n\nfunction parseYaml(yamlText) {\n  const result = {};\n  \n  const nameMatch = yamlText.match(/^name:\\s*(.+)$/m);\n  if (nameMatch) result.name = nameMatch[1].trim().replace(/^[\"']|[\"']$/g, '');\n  \n  const descMatch = yamlText.match(/^description:\\s*(.+)$/m);\n  if (descMatch) result.description = descMatch[1].trim().replace(/^[\"']|[\"']$/g, '');\n  \n  const addedMatch = yamlText.match(/^added_by:\\s*(.+)$/m);\n  if (addedMatch) result.added_by = addedMatch[1].trim().replace(/^[\"']|[\"']$/g, '');\n  \n  const scheduleMatch = yamlText.match(/^schedule:\\s*(.+)$/m);\n  if (scheduleMatch) {\n    result.schedule = scheduleMatch[1].trim().replace(/^[\"']|[\"']$/g, '').toLowerCase();\n  } else {\n    result.schedule = 'daily';\n  }\n  \n  const queryIndex = yamlText.indexOf('query:');\n  if (queryIndex !== -1) {\n    let queryPart = yamlText.substring(queryIndex + 6);\n    queryPart = queryPart.replace(/^\\s*[|>-]+\\s*\\r?\\n/, '');\n    \n    const lines = queryPart.split(/\\r?\\n/);\n    let minIndent = Infinity;\n    for (const line of lines) {\n      if (line.trim().length > 0) {\n        const match = line.match(/^\\s*/);\n        const indent = match ? match[0].length : 0;\n        if (indent < minIndent) minIndent = indent;\n      }\n    }\n    \n    if (minIndent !== Infinity && minIndent > 0) {\n      result.query = lines.map(line => line.substring(minIndent)).join('\\n').trim();\n    } else {\n      result.query = lines.join('\\n').trim();\n    }\n  }\n  \n  return result;\n}\n\nfor (const item of items) {\n  const yamlText = item.json.data || '';\n  const parsed = parseYaml(yamlText);\n  \n  let shouldRun = false;\n  if (parsed.schedule === 'hourly') {\n    shouldRun = true;\n  } else if (parsed.schedule === 'daily') {\n    if (currentHour === 8) {\n      shouldRun = true;\n    }\n  } else if (parsed.schedule === 'weekly') {\n    if (currentDay === 1 && currentHour === 8) {\n      shouldRun = true;\n    }\n  } else {\n    if (currentHour === 8) {\n      shouldRun = true;\n    }\n  }\n  \n  if (shouldRun) {\n    parsedItems.push({ json: parsed });\n  }\n}\n\nreturn parsedItems;"
+      },
+      "id": "3d48990b-d5ab-44a2-8e61-f8259610aca5",
+      "name": "Parse YAML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2576,
+        1696
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.results && $json.results.length > 0 }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          }
+        },
+        "options": {}
+      },
+      "id": "23998189-4908-4454-9d33-b89a5772f189",
+      "name": "IF Results Found",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2928,
+        1696
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/security/runHuntingQuery",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"query\": {{ JSON.stringify($json.query) }} }",
+        "options": {}
+      },
+      "id": "03395190-0aca-457e-a9ea-355cdbec16ae",
+      "name": "Defender XDR KQL Query",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        2752,
+        1696
+      ],
+      "credentials": {
+        "oAuth2Api": {
+          "id": "",
+          "name": "MS Security Graph (OAuth2 Client Credentials)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ \"https://gitlab.example.com/api/v4/projects/\" + $items(\"Git Config\")[0].json.gitLabProjectId + \"/issues?state=opened&in=title&search=\" + encodeURIComponent('🚨 Hunt Alert: ' + $('Parse YAML').item.json.name) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "PRIVATE-TOKEN",
+              "value": "YOUR_GITLAB_PRIVATE_TOKEN"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "84d70992-b594-4803-83d1-3a8c6a936755",
+      "name": "GitLab Search Issue",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        3360,
+        1680
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ JSON.parse($json.data).length === 0 }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          }
+        },
+        "options": {}
+      },
+      "id": "7f315fcf-dc0d-44c5-b3c9-699c8afc7716",
+      "name": "IF Issue Doesn't Exist",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2928,
+        1904
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ \"https://gitlab.example.com/api/v4/projects/\" + $items(\"Git Config\")[0].json.gitLabProjectId + \"/issues\" }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "PRIVATE-TOKEN",
+              "value": "YOUR_GITLAB_PRIVATE_TOKEN"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "title",
+              "value": "=🚨 Hunt Alert: {{ $('Parse YAML').item.json.name }}"
+            },
+            {
+              "name": "description",
+              "value": "=### 🚨 Alerte Threat Hunting : {{ $('Parse YAML').item.json.name }}\n\n**Description :** {{ $('Parse YAML').item.json.description }}\n**Ajouté par :** {{ $('Parse YAML').item.json.added_by }}\n**Date du Run :** {{ $now.toISODate() }}\n**Nombre de détections :** {{ $('Defender XDR KQL Query').item.json.results.length }}\n\n---\n\n#### 🔍 Détails des détections (Top 10) :\n{{ $('Defender XDR KQL Query').item.json.results.slice(0, 10).map(r => '• ' + Object.keys(r).filter(k => !k.startsWith('@') && !k.startsWith('_') && r[k] !== null && r[k] !== '').slice(0, 6).map(k => `**${k}** : \\\\\\`${String(r[k]).substring(0,100)}\\\\\\``).join(' | ')).join('\\\\n') }}\n\n---\n*Cette alerte a été générée automatiquement.*"
+            },
+            {
+              "name": "labels",
+              "value": "threat-hunting,alert"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cb7e0a2f-be6a-4735-9ae8-1e8282530994",
+      "name": "GitLab Create Issue",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        3360,
+        1888
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const issueUrl = $json.web_url;\nconst results = $('Defender XDR KQL Query').item.json.results || [];\nconst hunt = $('Parse YAML').item.json;\n\nconst card = {\n  \"type\": \"AdaptiveCard\",\n  \"version\": \"1.4\",\n  \"$schema\": \"http://adaptivecards.io/schemas/adaptive-card.json\",\n  \"body\": [\n    {\n      \"type\": \"TextBlock\",\n      \"text\": `🚨 Alerte Threat Hunting : ${hunt.name}`,\n      \"weight\": \"Bolder\",\n      \"size\": \"Medium\",\n      \"color\": \"Attention\"\n    },\n    {\n      \"type\": \"FactSet\",\n      \"facts\": [\n        {\n          \"title\": \"Description\",\n          \"value\": hunt.description || \"N/A\"\n        },\n        {\n          \"title\": \"Ajouté par\",\n          \"value\": hunt.added_by || \"N/A\"\n        },\n        {\n          \"title\": \"Date du Run\",\n          \"value\": new Date().toISOString().split('T')[0]\n        },\n        {\n          \"title\": \"Détections\",\n          \"value\": String(results.length)\n        }\n      ]\n    },\n    {\n      \"type\": \"TextBlock\",\n      \"text\": \"Détails des détections (Top 10) :\",\n      \"weight\": \"Bolder\",\n      \"spacing\": \"Medium\"\n    },\n    {\n      \"type\": \"Container\",\n      \"items\": results.slice(0, 10).map((r, i) => {\n        const keys = Object.keys(r).filter(k => !k.startsWith('@') && !k.startsWith('_') && r[k] !== null && r[k] !== '').slice(0, 6);\n        return {\n          \"type\": \"FactSet\",\n          \"spacing\": i === 0 ? \"Small\" : \"Medium\",\n          \"separator\": i !== 0,\n          \"facts\": keys.map(k => ({\n            \"title\": k,\n            \"value\": String(r[k]).substring(0, 150)\n          }))\n        };\n      })\n    }\n  ],\n  \"actions\": [\n    {\n      \"type\": \"Action.OpenUrl\",\n      \"title\": \"Voir l'Issue GitLab\",\n      \"url\": issueUrl\n    }\n  ]\n};\n\nfor (let key in $json) { delete $json[key]; }\nObject.assign($json, card);\nreturn $input.item;"
+      },
+      "id": "5b71bf60-5987-4be1-a15f-d00b4c13fc1a",
+      "name": "Prepare Teams Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2576,
+        2112
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<YOUR_TEAMS_OR_POWER_AUTOMATE_WEBHOOK_URL>",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "43759feb-3310-47ab-b290-0f84b6e136a5",
+      "name": "Teams Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        2928,
+        2112
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Git Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Git Config": {
+      "main": [
+        [
+          {
+            "node": "List Git Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Git Files": {
+      "main": [
+        [
+          {
+            "node": "IF YAML File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF YAML File": {
+      "main": [
+        [
+          {
+            "node": "Get File Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get File Content": {
+      "main": [
+        [
+          {
+            "node": "Parse YAML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse YAML": {
+      "main": [
+        [
+          {
+            "node": "Defender XDR KQL Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Defender XDR KQL Query": {
+      "main": [
+        [
+          {
+            "node": "IF Results Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Results Found": {
+      "main": [
+        [
+          {
+            "node": "GitLab Search Issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GitLab Search Issue": {
+      "main": [
+        [
+          {
+            "node": "IF Issue Doesn't Exist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Issue Doesn't Exist": {
+      "main": [
+        [
+          {
+            "node": "GitLab Create Issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GitLab Create Issue": {
+      "main": [
+        [
+          {
+            "node": "Prepare Teams Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Teams Payload": {
+      "main": [
+        [
+          {
+            "node": "Teams Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "id": "",
+  "tags": []
+}
